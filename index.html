@@ -1,0 +1,329 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+   <meta charset="UTF-8">
+   <meta http-equiv="X-UA-Compatible" content="IE=edge">
+   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+   <title>Line Rasterization Playground</title>
+   <style>
+      @font-face {
+         font-family: Tamzen;
+         font-size: 18px;
+         src: url(Tamzen6x12r.ttf);
+      }
+
+      body {
+         font-family: Tamzen;
+         margin: 0;
+         padding: 0;
+         background: #232729;
+         font: 200 16px/1.5 monospace;
+         font-feature-settings: "kern" 1;
+         font-kerning: normal;
+         font-weight: 400;
+         font-size: 16px;
+         color: #bbbbbb;
+      }
+
+      canvas {
+         width: 100%;
+         height: 100vh;
+         image-rendering: pixelated;
+      }
+
+      #controls {
+         position: absolute;
+         top: 0;
+         left: 0;
+         font-size: 20px;
+         color: #fff;
+         display: flex;
+         flex-direction: row;
+      }
+   </style>
+</head>
+
+<body>
+   <canvas id="output"></canvas>
+   <div id="controls">
+      <select id="algorithm">
+         <option selected="true" value="lineDDA">DDA</option>         
+         <option value="lineSubpixelDDA">Sub Pixel DDA</option>
+         <option value="lineSubpixelDDACenterSampling">Sub Pixel DDA Center Sampling</option>
+         <option value="lineSubpixelDDACenterSamplingIncludeEndpoint">Sub Pixel DDA Center Sampling include
+         <option value="lineBresenham">Bresenham</option>
+         <option value="lineSubPixelBresenham">Sub Pixel Bresenham</option>
+            endpoint</option>
+      </select>
+      <button id="snap">Snap to pixel centers</button>      
+      <button id="swap">Swap endpoints</button>
+      <label><input id="diamonds" type="checkbox" checked="false">Draw diamonds</label>
+   </div>
+</body>
+<script src='algorithms.js'></script>
+<script>
+   const canvas = document.querySelector("#output");
+const ctx = canvas.getContext("2d");
+const pixelSize = 100 * devicePixelRatio;
+const subPixelSize = 10 * devicePixelRatio;
+const realLineWidth = 2;
+let pixelColor = "#00f";
+const circleColor = "#f00";
+const rectColor = "#0f0";
+let p1 = { x: 1.2, y: 2.5 };
+let p2 = { x: 2.9, y: 2.9 };
+const steppedPoints = [];
+const helperLines = [];
+let algorithm = lineDDA;
+
+function drawGrid(gridSize, color) {
+   ctx.strokeStyle = color;
+   for (let y = 0; y < canvas.height; y += gridSize) {
+      for (let x = 0; x < canvas.width; x += gridSize) {
+         ctx.beginPath();
+         ctx.rect(x, y, gridSize, gridSize);
+         ctx.stroke();
+      }
+   }
+}
+
+function drawPixelCenters(gridSize, color) {
+   ctx.strokeStyle = color;
+   let drawDiamonds = document.querySelector("#diamonds").checked;
+   for (let y = gridSize / 2; y < canvas.height; y += gridSize) {
+      for (let x = gridSize / 2; x < canvas.width; x += gridSize) {
+         ctx.beginPath();
+         ctx.moveTo(x - gridSize / 10, y);
+         ctx.lineTo(x + gridSize / 10, y);
+         ctx.moveTo(x, y - gridSize / 10);
+         ctx.lineTo(x, y + gridSize / 10);
+         ctx.stroke();
+
+         if (drawDiamonds) {
+            ctx.beginPath();
+            ctx.moveTo(x - gridSize / 2, y);
+            ctx.lineTo(x, y - gridSize / 2);
+            ctx.lineTo(x + gridSize / 2, y);
+            ctx.lineTo(x, y + gridSize / 2);
+            ctx.lineTo(x - gridSize / 2, y);
+            ctx.stroke();
+         }
+      }
+   }
+}
+
+function drawLine(x1, y1, x2, y2, color) {
+   ctx.strokeStyle = color;
+   ctx.beginPath();
+   ctx.moveTo(x1 * pixelSize, y1 * pixelSize);
+   ctx.lineTo(x2 * pixelSize, y2 * pixelSize);
+   ctx.stroke();
+}
+
+function drawCircle(x, y, radius) {
+   ctx.strokeStyle = circleColor;
+   ctx.beginPath();
+   ctx.arc(x * pixelSize, y * pixelSize, radius * pixelSize, 0, 2 * Math.PI);
+   ctx.stroke();
+}
+
+function drawRect(x, y, width, height, color) {
+   if (!color) color = rectColor;
+   ctx.fillStyle = color;
+   ctx.beginPath();
+   ctx.rect(x * pixelSize, y * pixelSize, width * pixelSize, height * pixelSize);
+   ctx.fill();
+}
+
+function drawPixel(x, y) {
+   ctx.fillStyle = pixelColor;
+   ctx.beginPath();
+   ctx.rect(x * pixelSize, y * pixelSize, pixelSize, pixelSize);
+   ctx.fill();
+}
+
+function main() {
+   canvas.width = canvas.clientWidth * devicePixelRatio;
+   canvas.height = canvas.clientHeight * devicePixelRatio;
+
+   console.innerHTML = "";
+   steppedPoints.length = 0;
+   helperLines.length = 0;
+   pixelColor = "#00f";
+   algorithm(p1.x, p1.y, p2.x, p2.y);
+   // pixelColor = "#0f0";
+   // algorithm(p3.x, p3.y, p4.x, p4.y);
+
+   drawGrid(subPixelSize, "#555");
+   drawGrid(pixelSize, "#ccc");
+   drawPixelCenters(pixelSize, "#0c0");
+
+   drawLine(p1.x, p1.y, p2.x, p2.y, "rgb(254, 121, 5)");
+   drawRect(p1.x - 1 / subPixelSize / 2, p1.y - 1 / subPixelSize / 2, 1 / subPixelSize, 1 / subPixelSize, "#f00");
+   drawRect(p2.x - 1 / subPixelSize / 2, p2.y - 1 / subPixelSize / 2, 1 / subPixelSize, 1 / subPixelSize, "#ff0");
+
+   for (let i = 0; i < helperLines.length; i++) {
+      let line = helperLines[i];
+      drawLine(line.x1, line.y1, line.x2, line.y2, "#ff0");
+   }
+   for (let i = 0; i < steppedPoints.length; i++) {
+      const point = steppedPoints[i];
+      drawRect(point.x - 1 / subPixelSize / 2, point.y - 1 / subPixelSize / 2, 1 / subPixelSize, 1 / subPixelSize);
+   }
+
+   if (closestPoint) drawCircle(closestPoint.x, closestPoint.y, 0.25);
+}
+
+let dragStart = { x: 0, y: 0 };
+let draggedPoint = null;
+let closestPoint = null;
+
+function down(gridX, gridY) {
+   let distP1 = Math.sqrt((gridX - p1.x) * (gridX - p1.x) + (gridY - p1.y) * (gridY - p1.y));
+   let distP2 = Math.sqrt((gridX - p2.x) * (gridX - p2.x) + (gridY - p2.y) * (gridY - p2.y));
+   if (Math.min(distP1, distP2) > 0.25) {
+      draggedPoint = null;
+      return;
+   }
+   closestPoint = draggedPoint = distP1 < distP2 ? p1 : p2;
+   dragStart.x = gridX;
+   dragStart.y = gridY;
+   requestAnimationFrame(main);
+}
+
+function move(gridX, gridY) {
+   let distP1 = Math.sqrt((gridX - p1.x) * (gridX - p1.x) + (gridY - p1.y) * (gridY - p1.y));
+   let distP2 = Math.sqrt((gridX - p2.x) * (gridX - p2.x) + (gridY - p2.y) * (gridY - p2.y));
+
+   if (Math.min(distP1, distP2) > 0.25) {
+      closestPoint = null;
+   } else {
+      closestPoint = distP1 < distP2 ? p1 : p2;
+   }
+
+   if (draggedPoint) {
+      let deltaX = gridX - dragStart.x;
+      let deltaY = gridY - dragStart.y;
+      draggedPoint.x += deltaX;
+      draggedPoint.y += deltaY;
+      dragStart.x = gridX;
+      dragStart.y = gridY;
+      localStorage.setItem("points", JSON.stringify({ p1: p1, p2: p2 }));
+   }
+   requestAnimationFrame(main);
+}
+
+canvas.addEventListener("mousedown", function (mouseEvent) {
+   let gridX = mouseEvent.offsetX * devicePixelRatio / pixelSize;
+   let gridY = mouseEvent.offsetY * devicePixelRatio / pixelSize;
+   down(gridX, gridY);
+}, false);
+
+canvas.addEventListener("touchstart", function (touchEvent) {
+   touchEvent.preventDefault();
+   const touch = touchEvent.targetTouches[0];
+   let rect = touchEvent.target.getBoundingClientRect();
+   let x = touch.pageX - rect.left;
+   let y = touch.pageY - rect.top;
+   let gridX = x * devicePixelRatio / pixelSize;
+   let gridY = y * devicePixelRatio / pixelSize;
+   down(gridX, gridY);
+})
+
+canvas.addEventListener("mousemove", function (mouseEvent) {
+   let gridX = mouseEvent.offsetX * devicePixelRatio / pixelSize;
+   let gridY = mouseEvent.offsetY * devicePixelRatio / pixelSize;
+   move(gridX, gridY);
+});
+
+canvas.addEventListener("touchmove", function (touchEvent) {
+   touchEvent.preventDefault();
+   const touch = touchEvent.targetTouches[0];
+   let rect = touchEvent.target.getBoundingClientRect();
+   let x = touch.pageX - rect.left;
+   let y = touch.pageY - rect.top;
+   let gridX = x * devicePixelRatio / pixelSize;
+   let gridY = y * devicePixelRatio / pixelSize;
+   move(gridX, gridY);
+})
+
+canvas.addEventListener("mouseup", function (mouseEvent) {
+   draggedPoint = null;
+}, false);
+
+canvas.addEventListener("mouseleave", function () {
+   draggedPoint = null;
+   closestPoint = null;
+})
+
+function selectAlgorithm(name) {
+   if (name == "lineDDA") algorithm = lineDDA;
+   else if (name == "lineBresenham") algorithm = lineBresenham;
+   else if (name == "lineSubPixelBresenham") algorithm = lineSubPixelBresenham;
+   else if (name == "lineSubpixelDDA") algorithm = lineSubpixelDDA;
+   else if (name == "lineSubpixelDDACenterSampling") algorithm = lineSubpixelDDACenterSampling;
+   else if (name == "lineSubpixelDDACenterSamplingIncludeEndpoint") algorithm = lineSubpixelDDACenterSamplingIncludeEndpoint;
+   else algorithm = lineIntegerDDA;
+   requestAnimationFrame(main);
+}
+
+const algorithmSelect = document.querySelector("#algorithm");
+algorithmSelect.addEventListener("change", () => {
+   selectAlgorithm(algorithmSelect.value);
+   localStorage.setItem("algorithm", algorithmSelect.value);
+});
+
+const snapButton = document.querySelector("#snap");
+snapButton.addEventListener("click", () => {
+   p1.x = Math.floor(p1.x) + 0.5;
+   p1.y = Math.floor(p1.y) + 0.5;
+   p2.x = Math.floor(p2.x) + 0.5;
+   p2.y = Math.floor(p2.y) + 0.5;
+   localStorage.setItem("points", JSON.stringify({ p1: p1, p2: p2 }));
+   requestAnimationFrame(main);
+});
+
+const swapButton = document.querySelector("#swap");
+swapButton.addEventListener("click", () => {
+   let tmp = p2;
+   p2 = p1;
+   p1 = tmp;
+   localStorage.setItem("points", JSON.stringify({ p1: p1, p2: p2 }));
+   requestAnimationFrame(main);
+})
+
+document.querySelector("#diamonds").addEventListener("change", () => requestAnimationFrame(main));
+
+if (localStorage.getItem("points")) {
+   let points = JSON.parse(localStorage.getItem("points"));
+   p1 = points.p1;
+   p2 = points.p2;
+}
+// p1 = { x: 5.821875 - 4, y: 5.15 - 4 }
+// p2 = { x: 9.840625 - 4, y: 9.65625 - 4 }
+
+// gap
+// p1 = { x: 4.101875, y: 2.140000000000001 }
+//p2 = { x: 1.8106249999999995, y: 4.766250000000001 }
+
+// Overshooting
+p1 = { x: 4.101875, y: 2.140000000000001 }
+p2 = { x: 1.9206249999999994, y: 3.876250000000001 }
+
+// Tom failure case
+// p1 = { x: 198.046173 - 198, y: 167.552826 - 167 }; p2 = { x: 204.918884 - 198, y: 169.901337 - 167 };
+// let p3 = { x: 204.918884 - 198, y: 169.901337 - 167 }; p4 = { x: 208.969208 - 198, y: 165.241364 - 167 };
+
+if (localStorage.getItem("algorithm")) {
+   let algorithm = localStorage.getItem("algorithm");
+   algorithmSelect.value = algorithm;
+   selectAlgorithm(algorithm);
+} else {
+   selectAlgorithm(algorithmSelect.value);
+}
+
+requestAnimationFrame(main);
+</script>
+
+</html>

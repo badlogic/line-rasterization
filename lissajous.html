@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html>
+
+<body>
+   <center><div id="content"></div></center>
+   <script src="https://marioslab.io/dump/lightgl.js"></script>
+   <script src="algorithms.js"></script>
+   <script>
+      let content = document.querySelector("#content");
+      let title = document.createElement("div");
+      title.innerText = "WebGL";
+      content.appendChild(title);
+      var gl = GL.create({ antialias: false });
+      content.appendChild(gl.canvas);
+      gl.canvas.style.width = "640px";
+      gl.canvas.style.height = "480px";
+      gl.canvas.width = 320;
+      gl.canvas.height = 240;
+      gl.canvas.style.imageRendering = "pixelated";      
+      gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);  
+      let gpuCtx = gl.canvas.getContext("webgl")
+
+      title = document.createElement("div");
+      title.innerText = "CPU";
+      content.appendChild(title);
+      let cpuCanvas = document.createElement("canvas");
+      content.append(cpuCanvas);
+      cpuCanvas.width = 320;
+      cpuCanvas.height = 240;
+      cpuCanvas.style.width = "640px";
+      cpuCanvas.style.height = "480px";
+      cpuCanvas.style.background = "black";
+      cpuCanvas.style.imageRendering = "pixelated";
+      let cpuCtx = cpuCanvas.getContext("2d");
+      let cpuBuffer = cpuCtx.createImageData(320, 240);
+
+      title = document.createElement("div");
+      title.innerText = "Diff";
+      content.appendChild(title);
+      let diffCanvas = document.createElement("canvas");
+      content.append(diffCanvas);
+      diffCanvas.width = 320;
+      diffCanvas.height = 240;
+      diffCanvas.style.width = "640px";
+      diffCanvas.style.height = "480px";
+      diffCanvas.style.background = "black";
+      diffCanvas.style.imageRendering = "pixelated";
+      let diffCtx = diffCanvas.getContext("2d");
+      let diffBuffer = diffCtx.createImageData(320, 240);
+
+      let delta = Math.PI / 4, a = 4, b = 6;
+      gl.ondraw = function () {
+         delta += 0.016 / 40;
+         drawWebGL(delta);
+         drawCPU(delta);
+         drawDiff();
+      };    
+
+      function drawWebGL(delta) {
+         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+         gl.matrixMode(gl.PROJECTION);
+         gl.loadIdentity();
+         gl.ortho(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
+         gl.matrixMode(gl.MODELVIEW);
+         gl.loadIdentity();
+         
+         //delta = 1.048116;
+         // delta = 0.722428;
+         // delta = 1.577438;
+         //delta = 2.121372;
+
+         let last_x = 0, last_y = 0;
+         let segments = 50;
+         gl.begin(gl.LINES);
+         for (let i = 0; i <= segments; i++) {
+            let theta = i / segments * Math.PI;
+            let x = 100 * Math.sin(a * theta + delta) / 2 + gl.canvas.width / 2.0;
+            let y = 100 * Math.sin(b * theta) / 2 + gl.canvas.height / 2.0;
+            if (i > 0) {
+               gl.color(0, 1, 0);
+               gl.vertex(last_x - 75, last_y, 0);
+               gl.vertex(x - 75, y, 0);               
+               gl.color(0, 1, 1);
+               gl.vertex(Math.floor(last_x) + 75 + 0.5, Math.floor(last_y) + 0.5, 0);
+               gl.vertex(Math.floor(x) + 75 + 0.5, Math.floor(y) + 0.5, 0);
+            }
+
+            last_x = x;
+            last_y = y;
+         }
+         gl.end();
+      }
+
+      let steppedPoints = [];
+      let helperLines = [];   
+      let colorGreen = [0, 255, 0, 255];
+      let colorCyan = [0, 255, 255, 255];
+      let pixelColor = [255, 255, 255, 255];
+      
+      function drawPixelCPU(x, y) {
+         let addr = (x + y * 320) << 2;
+         cpuBuffer.data[addr] = pixelColor[0];
+         cpuBuffer.data[addr + 1] = pixelColor[1];
+         cpuBuffer.data[addr + 2] = pixelColor[2];
+         cpuBuffer.data[addr + 3] = pixelColor[3];
+      }
+      let drawPixel = drawPixelCPU; 
+
+      function drawCPU(delta) {         
+         cpuBuffer.data.fill(0);
+
+         steppedPoints = [];
+         helperLines = [];
+
+         let last_x = 0, last_y = 0;
+         let segments = 50;         
+         for (let i = 0; i <= segments; i++) {
+            let theta = i / segments * Math.PI;
+            let x = 100 * Math.sin(a * theta + delta) / 2 + gl.canvas.width / 2.0;
+            let y = 100 * Math.sin(b * theta) / 2 + gl.canvas.height / 2.0;
+            if (i > 0) {  
+               pixelColor = colorGreen;             
+               lineSubPixelBresenham(last_x - 75, last_y, x - 75, y);
+               // lineSubpixelDDACenterSampling(last_x - 75, last_y, x - 75, y);
+               // lineSubpixelDDA(last_x - 75, last_y, x - 75, y);
+               pixelColor = colorCyan;             
+               lineBresenham(last_x + 75, last_y, x + 75, y);         
+            }
+
+            last_x = x;
+            last_y = y;
+         }
+         cpuCtx.putImageData(cpuBuffer, 0, 0);
+      }
+
+      let gpuBuffer = new Uint8ClampedArray(320 * 240 * 4);
+
+      function drawDiff() {
+         diffBuffer.data.fill(0);         
+         gpuCtx.readPixels(0, 0, 320, 240, gpuCtx.RGBA, gpuCtx.UNSIGNED_BYTE, gpuBuffer);
+
+         for (let i = 0; i < diffBuffer.data.byteLength; i += 4) {
+            let cpu = cpuBuffer.data[i + 1];
+            let gpu = gpuBuffer[i + 1];
+            if (cpu != 0) {
+               diffBuffer.data[i] = 0;
+               diffBuffer.data[i + 1] = 255;
+               diffBuffer.data[i + 2] = 0;
+               diffBuffer.data[i + 3] = 255;
+            }
+            if (gpu != 0) {
+               diffBuffer.data[i] = 255;
+               diffBuffer.data[i + 1] = 0;
+               diffBuffer.data[i + 2] = 0;
+               diffBuffer.data[i + 3] = 255;
+            }
+         }
+         diffCtx.putImageData(diffBuffer, 0, 0);
+      }
+
+      gl.animate();
+   </script>
+</body>
+
+</html>
